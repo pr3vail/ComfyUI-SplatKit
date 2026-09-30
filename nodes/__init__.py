@@ -49,6 +49,7 @@ _MODULES = [
     ("four_d_anyone.export", "4DAnyone frameset export"),
     ("splatting.frameset", "splat frameset loader"),
     ("splatting.sequence", "SplatKit training and sequence nodes"),
+    ("splatting.scene", "COLMAP scene training node"),
     ("splatting.player", "sequence player"),
 ]
 

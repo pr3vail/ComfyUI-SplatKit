@@ -215,8 +215,9 @@ class CpuImages:
     DEFAULT_BUDGET = 6 * 1024 ** 3          # 6 GiB of decoded images
 
     def __init__(self, paths: list[Path], device: torch.device,
-                 budget_bytes: int = DEFAULT_BUDGET):
+                 budget_bytes: int = DEFAULT_BUDGET, size: tuple[int, int] | None = None):
         self._paths = paths
+        self._size = size                   # (width, height) every view is delivered at
         self._device = device
         self._budget = budget_bytes
         self._cache: OrderedDict[int, torch.Tensor] = OrderedDict()
@@ -229,7 +230,12 @@ class CpuImages:
         cached = self._cache.get(index)
         if cached is None:
             from PIL import Image
-            array = np.asarray(Image.open(self._paths[index]).convert("RGB"), dtype=np.uint8)
+            image = Image.open(self._paths[index]).convert("RGB")
+            if self._size is not None and image.size != self._size:
+                # A camera with the reference frustum at another resolution (see
+                # colmap._select_cameras): resampling it to the reference size is exact.
+                image = image.resize(self._size, Image.LANCZOS)
+            array = np.asarray(image, dtype=np.uint8)
             cached = torch.from_numpy(array.copy())           # uint8, host
             self._cache[index] = cached
             self._bytes += cached.numel()
@@ -259,6 +265,12 @@ class ColmapDataset:
         if not sparse.exists():
             sparse = self.root
         self._model = colmap.load(sparse)
+        dropped = self._model.get("dropped", [])
+        if dropped:
+            print(f"skipping {len(dropped)} image(s) whose camera has a different field of "
+                  f"view than the other {len(self._model['names'])}, e.g. {dropped[0]}. "
+                  "The trainer renders every view through one lens; train them in a "
+                  "separate run or undistort them to the shared camera first.", flush=True)
         self._image_dir = self.root / "images"
         if not self._image_dir.is_dir():
             raise FileNotFoundError(f"No images/ folder in {self.root}")
@@ -291,7 +303,8 @@ class ColmapDataset:
     def images(self, frame: int = 0, device="cuda", subset: list[int] | None = None) -> CpuImages:
         names = self._model["names"]
         idx = range(len(names)) if subset is None else subset
-        return CpuImages([self._image_dir / names[i] for i in idx], torch.device(device))
+        return CpuImages([self._image_dir / names[i] for i in idx], torch.device(device),
+                         size=(self._model["width"], self._model["height"]))
 
     def hull(self, frame: int = 0, device="cuda") -> tuple[torch.Tensor, torch.Tensor]:
         """The SfM cloud, in the normalised frame. Same role a visual hull plays."""

@@ -37,8 +37,10 @@ CAMERA_MODELS = {
     8: ("SIMPLE_RADIAL_FISHEYE", 4),
     9: ("RADIAL_FISHEYE", 5),
     10: ("THIN_PRISM_FISHEYE", 12),
+    11: ("SPHERE", 3),             # SphereSfM's equirect camera; parsed, never trained
 }
 PINHOLE_LIKE = {"SIMPLE_PINHOLE", "PINHOLE", "SIMPLE_RADIAL", "RADIAL", "OPENCV"}
+UNDISTORTED = {"SIMPLE_PINHOLE", "PINHOLE"}
 
 
 def _read(fh, fmt: str):
@@ -107,7 +109,8 @@ def intrinsics(camera: dict) -> tuple[float, float, float, float]:
     p = camera["params"]
     if camera["model"] == "SIMPLE_PINHOLE":
         return float(p[0]), float(p[0]), float(p[1]), float(p[2])
-    if camera["model"] in ("SIMPLE_RADIAL", "SIMPLE_RADIAL_FISHEYE"):
+    if camera["model"] in ("SIMPLE_RADIAL", "RADIAL", "SIMPLE_RADIAL_FISHEYE", "RADIAL_FISHEYE"):
+        # one focal length: f, cx, cy, then the distortion terms
         return float(p[0]), float(p[0]), float(p[1]), float(p[2])
     return float(p[0]), float(p[1]), float(p[2]), float(p[3])
 
@@ -141,8 +144,9 @@ def load(sparse_dir: str | Path) -> dict:
             "(colmap image_undistorter).")
 
     ordered = sorted(images.values(), key=lambda i: i["name"])
+    ref_id, keep, dropped = _select_cameras(cameras, ordered)
     c2w, names = [], []
-    for image in ordered:
+    for image in keep:
         rot = quat_to_matrix(image["qvec"])
         w2c = np.eye(4)
         w2c[:3, :3] = rot
@@ -152,13 +156,47 @@ def load(sparse_dir: str | Path) -> dict:
         c2w.append(pose)
         names.append(image["name"])
 
-    first = cameras[ordered[0]["camera_id"]]
-    fx, fy, cx, cy = intrinsics(first)
+    ref = cameras[ref_id]
+    fx, fy, cx, cy = intrinsics(ref)
     return {
         "c2w": np.stack(c2w).astype(np.float32),
         "names": names,
         "fx": fx, "fy": fy, "cx": cx, "cy": cy,
-        "width": int(first["width"]), "height": int(first["height"]),
+        "width": int(ref["width"]), "height": int(ref["height"]),
         "points": xyz, "colors": rgb,
-        "shared_intrinsics": len({i["camera_id"] for i in images.values()}) == 1,
+        "shared_intrinsics": len({i["camera_id"] for i in keep}) == 1,
+        "dropped": dropped,
+        "models": sorted({cameras[i["camera_id"]]["model"] for i in keep}),
     }
+
+
+def _normalised(camera: dict) -> np.ndarray:
+    """Intrinsics as fractions of the image size: equal for two cameras that see the same
+    frustum at different resolutions."""
+    fx, fy, cx, cy = intrinsics(camera)
+    w, h = float(camera["width"]), float(camera["height"])
+    return np.array([fx / w, fy / h, cx / w, cy / h])
+
+
+def _select_cameras(cameras: dict, ordered: list[dict]) -> tuple[int, list[dict], list[str]]:
+    """The reference camera and the images the trainer can use with it.
+
+    The trainer renders every view with one shared pinhole. A SphereSfM dataset can hold
+    more than one camera: the hi-res initial pano is its own SPHERE camera, so its cube
+    faces are the same 90 degree frustum at a larger size, and Add HiRes Views registers
+    perspective views with a field of view of their own. The first kind is kept and
+    resized to the reference size on load, which is exact. The second would be rendered
+    through the wrong lens, so it is dropped and named rather than trained wrong.
+
+    The reference is the camera most images use; a tie goes to the larger image.
+    """
+    counts: dict[int, int] = {}
+    for image in ordered:
+        counts[image["camera_id"]] = counts.get(image["camera_id"], 0) + 1
+    ref_id = max(counts, key=lambda c: (counts[c], cameras[c]["width"] * cameras[c]["height"]))
+    ref = _normalised(cameras[ref_id])
+    keep, dropped = [], []
+    for image in ordered:
+        same = np.allclose(_normalised(cameras[image["camera_id"]]), ref, rtol=2e-3, atol=2e-3)
+        (keep if same else dropped).append(image if same else image["name"])
+    return ref_id, keep, dropped
