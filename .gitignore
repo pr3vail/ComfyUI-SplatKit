@@ -12,8 +12,12 @@ wheels/
 _input/
 # ComfyUI /object_info dump -- captured locally, leaks the author's folder contents. Never commit.
 objinfo.json
-# Local AI-assistant session config.
-.claude/
+# Local AI-assistant session config, except the shared attribution guard.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/attribution_guard.py
 # Dev workflows
 workflows/1_generate-dataset-hires-segmented.json
 workflows/1_generate-dataset-hires-ADV.json
