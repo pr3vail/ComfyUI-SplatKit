@@ -3,6 +3,8 @@
 The `SplatKit/4DAnyone` nodes generate synchronized views from a video of one
 person. The `SplatKit/Splatting` nodes train and play a Gaussian splat for each
 frame. The result is a sequence of splats, not a rigged character.
+**Train Splat (COLMAP Dataset)**, in the same category, uses the same backend to train a
+static scene from a SphereSfM dataset. See the main README, *Training the dataset*.
 
 ## Setup and first run
 
@@ -125,11 +127,15 @@ The trainer lives in `core/splatting/training/` and runs through
 `tools/run_splat_training.py`. The installer uses a SHA-256-verified gsplat wheel
 from the [SplatKit release](https://github.com/mickmumpitz/ComfyUI-SplatKit/releases/tag/gsplat-1.4.0-pt28-cu128).
 Validation and workflow-generation tools are in `tools/splatting/`; regression
-checks run with `python tests/test_splat_backend.py`.
+checks run with `python tests/test_splat_backend.py` and
+`python tests/test_colmap_dataset.py`.
 
-Load Frameset also accepts compatible datasets from other producers. General COLMAP
-training is not exposed: the reader needs per-view calibration, validated distortion
-handling and corrected RADIAL parameters. Equirectangular input is unsupported.
+Load Frameset also accepts compatible datasets from other producers. COLMAP training is
+exposed only through Train Splat (COLMAP Dataset), and only for undistorted pinhole cameras
+(`PINHOLE`, `SIMPLE_PINHOLE`), which is what SphereSfM and Add HiRes Views write. Views are
+rendered through one shared lens. Views with the same field of view at another resolution are
+resized to that lens. Views with a different field of view are left out and named. Models with
+distortion terms are refused. Equirectangular input is unsupported.
 
 Synthetic training/export and ComfyUI integration checks pass. A full real-person
 video run and visual browser playback still require validation.

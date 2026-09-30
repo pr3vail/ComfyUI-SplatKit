@@ -112,11 +112,7 @@ class SplatKitTrain:
         return float("nan")
 
     def train(self, frameset, quality, name, clean=True, motion=True, retrain=False, perceptual_model=None):
-        if not perceptual_model:
-            raise BackendError("Connect Splat Perceptual Model Loader and select VGG-19 weights.")
-        weights = check_path(perceptual_model, "perceptual_model")
-        if not weights.is_file():
-            raise BackendError(f"Perceptual weights not found: {weights}")
+        weights = _check_perceptual(perceptual_model)
         config = load_config(require_generator=False)
         frameset = read_frameset(check_path(frameset["dir"], "frameset"), frameset.get("frame_ids"))
         src = Path(frameset["dir"])
@@ -128,50 +124,65 @@ class SplatKitTrain:
                      "source": str(src), "content": frameset["fingerprint"],
                      "frames": frameset["frame_ids"], "quality": quality,
                      "clean": bool(clean), "motion": motion}
-        done = None if retrain else _finished_sequence(name, signature)
-        if done is not None:
-            print(f"{LOG} reusing trained sequence {done}")
-            seq = ensure_player_files(read_sequence(done))
-            return (seq, load_images(seq["preview"]))
-        out = sequence_dir(name)
-        args = [config["python"], str(runtime.WORKER), "train", str(src), "-o", str(out),
-                "--quality", quality, "--frames", ",".join(map(str, frameset["frame_ids"]))]
+        extra = ["--frames", ",".join(map(str, frameset["frame_ids"]))]
         if not clean:
-            args.append("--no-clean")
+            extra.append("--no-clean")
         if not motion:
-            args.append("--no-advect")
+            extra.append("--no-advect")
             if has_skeleton is False:
                 print(f"{LOG} {src.name} has no skeleton.npz; warm-starting without motion")
-        args += ["--perceptual-weights", str(weights)]
-        total = frameset.get("frames", 1)
-        try:
-            import comfy.model_management as mm
-            mm.unload_all_models()
-            mm.soft_empty_cache()
-        except Exception:
-            pass
-        print(f"{LOG} training {total} frame(s) at '{quality}' -> {out}")
+        return _train(config, src, signature, name, quality, weights, extra,
+                      frameset.get("frames", 1), retrain)
 
-        def preview(line: str):
-            # the trainer writes preview/frame_NNNNN.png (the orbit view of that frame) before it
-            # prints the frame line, so the newest one is the live preview of the training.
-            m = _FRAME_LINE.match(line)
-            if not m:
-                return None
-            png = out / "preview" / f"frame_{int(m.group(1)):05d}.png"
-            if png.is_file():
-                from PIL import Image
-                return Image.open(png).convert("RGB")
-            return None
 
-        run(args, cwd=PACK_ROOT,
-            progress=FrameProgress(total), preview=preview)
-        seq = read_sequence(out)
-        if not seq["preview"]:
-            print(f"{LOG} WARNING: no preview frames were written under {out}; the turnaround "
-                  "output is empty")
-        write_json(out / "splatkit_cache.json", signature)
+def _check_perceptual(perceptual_model):
+    if not perceptual_model:
+        raise BackendError("Connect Splat Perceptual Model Loader and select VGG-19 weights.")
+    weights = check_path(perceptual_model, "perceptual_model")
+    if not weights.is_file():
+        raise BackendError(f"Perceptual weights not found: {weights}")
+    return weights
+
+
+def _train(config, src, signature, name, quality, weights, extra, total, retrain):
+    """Run the backend trainer on `src` into a new output folder, or reuse a finished one
+    whose signature matches. Shared by the frameset and the COLMAP scene nodes."""
+    done = None if retrain else _finished_sequence(name, signature)
+    if done is not None:
+        print(f"{LOG} reusing trained sequence {done}")
+        seq = ensure_player_files(read_sequence(done))
         return (seq, load_images(seq["preview"]))
+    out = sequence_dir(name)
+    args = [config["python"], str(runtime.WORKER), "train", str(src), "-o", str(out),
+            "--quality", quality, *extra, "--perceptual-weights", str(weights)]
+    try:
+        import comfy.model_management as mm
+        mm.unload_all_models()
+        mm.soft_empty_cache()
+    except Exception:
+        pass
+    print(f"{LOG} training {total} frame(s) at '{quality}' -> {out}")
+
+    def preview(line: str):
+        # the trainer writes preview/frame_NNNNN.png (the orbit view of that frame) before it
+        # prints the frame line, so the newest one is the live preview of the training.
+        m = _FRAME_LINE.match(line)
+        if not m:
+            return None
+        png = out / "preview" / f"frame_{int(m.group(1)):05d}.png"
+        if png.is_file():
+            from PIL import Image
+            return Image.open(png).convert("RGB")
+        return None
+
+    run(args, cwd=PACK_ROOT,
+        progress=FrameProgress(total), preview=preview)
+    seq = read_sequence(out)
+    if not seq["preview"]:
+        print(f"{LOG} WARNING: no preview frames were written under {out}; the turnaround "
+              "output is empty")
+    write_json(out / "splatkit_cache.json", signature)
+    return (seq, load_images(seq["preview"]))
 
 
 class SplatKitLoadSequence:

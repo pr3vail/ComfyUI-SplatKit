@@ -18,8 +18,9 @@ Feed it one equirectangular panorama and a prompt. You get back a **COLMAP datas
 (`images/` + `sparse/0` + an init point cloud) that trains straight away in any COLMAP-compatible
 3D Gaussian Splatting trainer. The panorama branch needs no external venv and nothing to build.
 
-SplatKit produces **datasets, not trained splats** — training stays in whichever trainer you
-already like.
+SplatKit's main output is a **dataset**, so you can train it in whichever trainer you already
+like. If the optional splat backend is installed, **Train Splat (COLMAP Dataset)** can also
+train the dataset into a splat inside the same graph.
 
 > **Installing right now:** SplatKit isn't available through the ComfyUI Manager at the moment.
 > To add it to ComfyUI, download **[`install_splatkit.bat`](https://github.com/mickmumpitz/ComfyUI-SplatKit/releases/download/installer-1.0.0/install_splatkit.bat)**
@@ -87,7 +88,7 @@ visibly degrades what WAN paints into the holes.
 ## Nodes
 
 Dataset nodes live under **SplatKit**. Six generator-specific nodes live under
-**SplatKit/4DAnyone**, and nine shared training/sequence nodes under **SplatKit/Splatting**; see [the 4D guide](docs/4DANYONE.md).
+**SplatKit/4DAnyone**, and ten shared training/sequence nodes under **SplatKit/Splatting**; see [the 4D guide](docs/4DANYONE.md).
 Install the backend, install the [required models](docs/4DANYONE.md#manual-model-installation), and select them in the model loaders. The 4D nodes do not download model weights automatically.
 
 - **Core** — `Dataset Project`, `MoGe Model Loader`, `Camera Plot Fly-Through (Geometry)`,
@@ -127,6 +128,17 @@ optional refinements on top of the base pipeline — full detail in
 The COLMAP output is ordinary — point any 3DGS trainer at the dataset folder (`images/` +
 `sparse/0`). The default output uses ordinary pinhole cameras, so no special projection support
 is required.
+
+**In ComfyUI:** connect `model_dir` from **SphereSfM Dataset** (or `dataset_dir` from **Add HiRes
+Views to Dataset**) to **Train Splat (COLMAP Dataset)** under **SplatKit/Splatting**. Also connect
+a **Splat Perceptual Model Loader**. The node uses the same splat backend as the 4D pipeline:
+install it once with a **Splat Backend Setup** node (see [the 4D guide](docs/4DANYONE.md)). It
+trains one splat seeded from the SfM point cloud. It returns a one-frame `sequence` (for Sequence
+Frame, Sequence Player and Save 3D Model), a `flythrough` that replays the captured cameras, and
+the `ply_path` of the finished splat. The trainer renders every view through one shared pinhole
+lens. Cube faces of the hi-res pano are the same lens at a larger size, so they are resized and
+kept. HiRes perspective views have their own field of view, so the node leaves them out and logs
+their names. To use those views, train the dataset in an external trainer.
 
 Two things worth knowing whatever trainer you use:
 
